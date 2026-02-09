@@ -66,8 +66,8 @@ def load_data():
     """Load and prepare all datasets with caching"""
     
     # Load parquet files
-    df_final = pd.read_parquet('../dataset/CLEANED_FINAL_NMAT.parquet')
-    df_matching = pd.read_parquet('../dataset/MATCHING_PLE_NMAT.parquet')
+    df_final = pd.read_parquet('dataset/CLEANED_FINAL_NMAT.parquet')
+    df_matching = pd.read_parquet('dataset/MATCHING_PLE_NMAT.parquet')
     
     # Calculate score components
     score_components = ['NMS_VCss', 'NMS_IRss', 'NMS_Qss', 'NMS_PAss', 
