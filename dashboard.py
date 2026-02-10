@@ -67,8 +67,8 @@ def load_data():
     """Load and prepare all datasets with TRUE raw scores from MATCHING_PLE"""
     
     # Load parquet files
-    df_final = pd.read_parquet('../dataset/CLEANED_FINAL_NMAT.parquet')
-    df_matching = pd.read_parquet('../dataset/MATCHING_PLE_NMAT.parquet')
+    df_final = pd.read_parquet('dataset/CLEANED_FINAL_NMAT.parquet')
+    df_matching = pd.read_parquet('dataset/MATCHING_PLE_NMAT.parquet')
     
     # ========================================================================
     # STEP 1: Calculate TRUE raw scores from MATCHING_PLE
