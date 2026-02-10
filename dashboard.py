@@ -1,6 +1,7 @@
 """
 NMAT Performance Analysis Dashboard
 Comprehensive Policy Report Visualization System
+CORRECTED VERSION - Uses TRUE Raw Scores from MATCHING_PLE
 """
 
 import streamlit as st
@@ -58,41 +59,66 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# DATA LOADING WITH CACHING
+# DATA LOADING WITH CACHING - CORRECTED TO USE TRUE RAW SCORES
 # ============================================================================
 
 @st.cache_data(ttl=3600)
 def load_data():
-    """Load and prepare all datasets with caching"""
+    """Load and prepare all datasets with TRUE raw scores from MATCHING_PLE"""
     
     # Load parquet files
-    df_final = pd.read_parquet('dataset/CLEANED_FINAL_NMAT.parquet')
-    df_matching = pd.read_parquet('dataset/MATCHING_PLE_NMAT.parquet')
+    df_final = pd.read_parquet('../dataset/CLEANED_FINAL_NMAT.parquet')
+    df_matching = pd.read_parquet('../dataset/MATCHING_PLE_NMAT.parquet')
     
-    # Calculate score components
-    score_components = ['NMS_VCss', 'NMS_IRss', 'NMS_Qss', 'NMS_PAss', 
-                       'NMS_BIOss', 'NMS_PHYss', 'NMS_SSCss', 'NMS_CHEMss']
+    # ========================================================================
+    # STEP 1: Calculate TRUE raw scores from MATCHING_PLE
+    # ========================================================================
+    true_raw_components = ['STU_RS_CA01', 'STU_RS_CA02', 'STU_RS_CA03', 'STU_RS_CA04',
+                           'STU_RS_CA05', 'STU_RS_CA06', 'STU_RS_CA07', 'STU_RS_CA08']
     
-    df_final['Total_Raw_Score_Calculated'] = df_final[score_components].sum(axis=1)
-    df_final['Part_I_Raw_Score'] = df_final[['NMS_VCss', 'NMS_IRss', 'NMS_Qss', 'NMS_PAss']].sum(axis=1)
-    df_final['Part_II_Raw_Score'] = df_final[['NMS_BIOss', 'NMS_PHYss', 'NMS_SSCss', 'NMS_CHEMss']].sum(axis=1)
-    df_final['All_Components_Present'] = df_final[score_components].notna().all(axis=1)
+    # Calculate TRUE raw scores (NOT scaled scores!)
+    df_matching['Total_Raw_Score_TRUE'] = df_matching[true_raw_components].sum(axis=1)
+    df_matching['Part_I_Raw_Score_TRUE'] = df_matching[['STU_RS_CA01', 'STU_RS_CA02', 
+                                                          'STU_RS_CA03', 'STU_RS_CA04']].sum(axis=1)
+    df_matching['Part_II_Raw_Score_TRUE'] = df_matching[['STU_RS_CA05', 'STU_RS_CA06',
+                                                           'STU_RS_CA07', 'STU_RS_CA08']].sum(axis=1)
+    df_matching['All_Raw_Components_Present'] = df_matching[true_raw_components].notna().all(axis=1)
     
-    # Integrate with PLE data
-    df_matching_subset = df_matching.rename(columns={'STU_NO': 'NMA_AppNo'})
-    df_final['Source_File'] = 'CLEANED_FINAL'
+    # ========================================================================
+    # STEP 2: Prepare MATCHING_PLE for merge
+    # ========================================================================
+    df_matching_subset = df_matching.copy()
+    df_matching_subset = df_matching_subset.rename(columns={'STU_NO': 'NMA_AppNo'})
     
+    merge_columns = ['NMA_AppNo',
+                     # TRUE raw score components
+                     'STU_RS_CA01', 'STU_RS_CA02', 'STU_RS_CA03', 'STU_RS_CA04',
+                     'STU_RS_CA05', 'STU_RS_CA06', 'STU_RS_CA07', 'STU_RS_CA08',
+                     # Calculated TRUE raw scores
+                     'Total_Raw_Score_TRUE', 'Part_I_Raw_Score_TRUE', 'Part_II_Raw_Score_TRUE',
+                     'All_Raw_Components_Present',
+                     # Other PLE fields
+                     'STU_RSCORE', 'STU_PRANK', 'NMAT_YEAR', 'KEY']
+    
+    df_matching_subset = df_matching_subset[merge_columns]
+    
+    # ========================================================================
+    # STEP 3: Merge with CLEANED_FINAL (LEFT JOIN)
+    # ========================================================================
     df_integrated = df_final.merge(
-        df_matching_subset[['NMA_AppNo', 'STU_RSCORE', 'STU_PRANK', 'NMAT_YEAR', 'KEY']],
+        df_matching_subset,
         on='NMA_AppNo',
         how='left',
         indicator=True
     )
     
     df_integrated['Has_PLE_Match'] = df_integrated['_merge'] == 'both'
+    df_integrated['Has_TRUE_Raw_Scores'] = df_integrated['All_Raw_Components_Present'].fillna(False)
     
-    # Filter for complete records
-    df_analysis = df_integrated[df_integrated['All_Components_Present']].copy()
+    # ========================================================================
+    # STEP 4: Filter for complete TRUE raw scores
+    # ========================================================================
+    df_analysis = df_integrated[df_integrated['Has_TRUE_Raw_Scores']].copy()
     
     # Convert NMS_PER to numeric
     df_analysis['NMS_PER'] = pd.to_numeric(df_analysis['NMS_PER'], errors='coerce')
@@ -148,15 +174,15 @@ def create_warning_box(text):
                 unsafe_allow_html=True)
 
 # ============================================================================
-# VISUALIZATION FUNCTIONS
+# VISUALIZATION FUNCTIONS - UPDATED TO USE TRUE RAW SCORES
 # ============================================================================
 
 def plot_performance_trends(df):
-    """Overall Performance Trends"""
+    """Overall Performance Trends using TRUE raw scores"""
     yearly_stats = df.groupby('Year').agg({
-        'Total_Raw_Score_Calculated': ['median', 'mean', lambda x: x.quantile(0.25), lambda x: x.quantile(0.75)],
-        'Part_I_Raw_Score': ['median', 'mean'],
-        'Part_II_Raw_Score': ['median', 'mean'],
+        'Total_Raw_Score_TRUE': ['median', 'mean', lambda x: x.quantile(0.25), lambda x: x.quantile(0.75)],
+        'Part_I_Raw_Score_TRUE': ['median', 'mean'],
+        'Part_II_Raw_Score_TRUE': ['median', 'mean'],
         'NMS_PER': ['median', 'mean', lambda x: x.quantile(0.25), lambda x: x.quantile(0.75)],
         'NMA_AppNo': 'count'
     }).reset_index()
@@ -168,15 +194,15 @@ def plot_performance_trends(df):
     # Create subplots
     fig = make_subplots(
         rows=2, cols=2,
-        subplot_titles=('Total Raw Score Trends (Median with IQR)',
-                       'Part I vs Part II Performance',
+        subplot_titles=('Total TRUE Raw Score Trends (Median with IQR)',
+                       'Part I vs Part II Performance (TRUE Raw Scores)',
                        'Percentile Rank Trends',
                        'Number of Examinees per Year'),
         specs=[[{"secondary_y": False}, {"secondary_y": False}],
                [{"secondary_y": False}, {"secondary_y": False}]]
     )
     
-    # Plot 1: Total Raw Score
+    # Plot 1: Total TRUE Raw Score
     fig.add_trace(
         go.Scatter(x=yearly_stats['Year'], y=yearly_stats['Total_Median'],
                   mode='lines+markers', name='Median Total Score',
@@ -259,8 +285,8 @@ def plot_performance_trends(df):
     fig.update_xaxes(title_text="Year", row=2, col=1)
     fig.update_xaxes(title_text="Year", row=2, col=2)
     
-    fig.update_yaxes(title_text="Total Raw Score", row=1, col=1)
-    fig.update_yaxes(title_text="Median Raw Score", row=1, col=2)
+    fig.update_yaxes(title_text="Total TRUE Raw Score", row=1, col=1)
+    fig.update_yaxes(title_text="Median TRUE Raw Score", row=1, col=2)
     fig.update_yaxes(title_text="Percentile Rank", row=2, col=1)
     fig.update_yaxes(title_text="Count", row=2, col=2)
     
@@ -269,19 +295,19 @@ def plot_performance_trends(df):
     return fig, yearly_stats
 
 def plot_stability_analysis(df):
-    """Stability Analysis Boxplots"""
+    """Stability Analysis Boxplots using TRUE raw scores"""
     fig = make_subplots(
         rows=3, cols=1,
-        subplot_titles=('Total Raw Scores by Year',
-                       'Part I vs Part II by Year',
+        subplot_titles=('Total TRUE Raw Scores by Year',
+                       'Part I vs Part II (TRUE Raw Scores) by Year',
                        'Percentile Ranks by Year')
     )
     
     years = sorted(df['Year'].unique())
     
-    # Total Raw Scores
+    # Total TRUE Raw Scores
     for year in years:
-        year_data = df[df['Year'] == year]['Total_Raw_Score_Calculated'].dropna()
+        year_data = df[df['Year'] == year]['Total_Raw_Score_TRUE'].dropna()
         fig.add_trace(
             go.Box(y=year_data, name=str(year), showlegend=False),
             row=1, col=1
@@ -289,8 +315,8 @@ def plot_stability_analysis(df):
     
     # Part I and Part II
     for year in years:
-        part1_data = df[df['Year'] == year]['Part_I_Raw_Score'].dropna()
-        part2_data = df[df['Year'] == year]['Part_II_Raw_Score'].dropna()
+        part1_data = df[df['Year'] == year]['Part_I_Raw_Score_TRUE'].dropna()
+        part2_data = df[df['Year'] == year]['Part_II_Raw_Score_TRUE'].dropna()
         
         fig.add_trace(
             go.Box(y=part1_data, name=f'{year} P1', 
@@ -315,8 +341,8 @@ def plot_stability_analysis(df):
     fig.update_xaxes(title_text="Year & Test Part", row=2, col=1)
     fig.update_xaxes(title_text="Year", row=3, col=1)
     
-    fig.update_yaxes(title_text="Total Raw Score", row=1, col=1)
-    fig.update_yaxes(title_text="Raw Score", row=2, col=1)
+    fig.update_yaxes(title_text="Total TRUE Raw Score", row=1, col=1)
+    fig.update_yaxes(title_text="TRUE Raw Score", row=2, col=1)
     fig.update_yaxes(title_text="Percentile Rank", row=3, col=1)
     
     fig.update_layout(height=2000, showlegend=False)
@@ -477,7 +503,7 @@ def plot_course_analysis(df):
     
     fig.update_layout(
         height=1000,
-        barmode='stack'  # Only for the first subplot
+        barmode='stack'
     )
     
     fig.update_xaxes(title_text="Percentage (%)", row=1, col=1)
@@ -522,16 +548,16 @@ def plot_ple_analysis(df):
         height=500
     )
     
-    # Box plot comparison
+    # Box plot comparison using TRUE raw scores
     fig2 = go.Figure()
-    fig2.add_trace(go.Box(y=df['NMS_PER'], name='All', marker_color='lightblue'))
-    fig2.add_trace(go.Box(y=ple_matched['NMS_PER'], name='PLE-Matched', marker_color='lightgreen'))
+    fig2.add_trace(go.Box(y=df['Total_Raw_Score_TRUE'], name='All', marker_color='lightblue'))
+    fig2.add_trace(go.Box(y=ple_matched['Total_Raw_Score_TRUE'], name='PLE-Matched', marker_color='lightgreen'))
     if len(non_ple) > 0:
-        fig2.add_trace(go.Box(y=non_ple['NMS_PER'], name='Non-Matched', marker_color='lightcoral'))
+        fig2.add_trace(go.Box(y=non_ple['Total_Raw_Score_TRUE'], name='Non-Matched', marker_color='lightcoral'))
     
     fig2.update_layout(
-        title="Percentile Rank Distribution by PLE Match Status",
-        yaxis_title="Percentile Rank",
+        title="TRUE Raw Score Distribution by PLE Match Status",
+        yaxis_title="Total TRUE Raw Score",
         height=500
     )
     
@@ -567,7 +593,7 @@ def plot_sankey_flow(df, source_col, target_col, title):
             source=source_indices,
             target=target_indices,
             value=values,
-            color='rgba(169, 169, 169, 0.2)'  # Light gray with transparency
+            color='rgba(169, 169, 169, 0.2)'
         )
     )])
     
@@ -657,15 +683,15 @@ def main():
         st.markdown("---")
         
         # Key Statistics
-        st.subheader("📈 Key Performance Indicators")
+        st.subheader("📈 Key Performance Indicators (TRUE Raw Scores)")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("**Score Statistics**")
-            st.metric("Median Total Raw Score", f"{df_filtered['Total_Raw_Score_Calculated'].median():.0f}")
-            st.metric("Median Part I Score", f"{df_filtered['Part_I_Raw_Score'].median():.0f}")
-            st.metric("Median Part II Score", f"{df_filtered['Part_II_Raw_Score'].median():.0f}")
+            st.markdown("**TRUE Raw Score Statistics**")
+            st.metric("Median Total TRUE Raw Score", f"{df_filtered['Total_Raw_Score_TRUE'].median():.0f}")
+            st.metric("Median Part I TRUE Raw Score", f"{df_filtered['Part_I_Raw_Score_TRUE'].median():.0f}")
+            st.metric("Median Part II TRUE Raw Score", f"{df_filtered['Part_II_Raw_Score_TRUE'].median():.0f}")
         
         with col2:
             st.markdown("**University Distribution**")
@@ -689,7 +715,7 @@ def main():
         create_insight_box(
             f"The dataset contains {len(df_filtered):,} complete NMAT records spanning "
             f"{df_filtered['Year'].nunique()} years (2006-2018) with {df_filtered['Has_PLE_Match'].mean()*100:.2f}% "
-            f"successfully matched to PLE data."
+            f"successfully matched to PLE data using TRUE raw scores from MATCHING_PLE."
         )
         
         foreign_count = (df_filtered['University_Type'] == 'Foreign').sum()
@@ -715,37 +741,37 @@ def main():
         col1, col2, col3 = st.columns(3)
         
         create_metric_cards(col1, "Total Records Loaded", f"{len(df_final):,}")
-        create_metric_cards(col2, "Complete Records", f"{len(df_analysis):,}")
+        create_metric_cards(col2, "Complete TRUE Raw Scores", f"{len(df_analysis):,}")
         create_metric_cards(col3, "Completeness Rate", f"{len(df_analysis)/len(df_final)*100:.2f}%")
         
         st.markdown("---")
         
         # Component Score Completeness
-        st.subheader("✅ Component Score Validation")
+        st.subheader("✅ TRUE Raw Score Component Validation (from MATCHING_PLE)")
         
-        score_components = ['NMS_VCss', 'NMS_IRss', 'NMS_Qss', 'NMS_PAss',
-                           'NMS_BIOss', 'NMS_PHYss', 'NMS_SSCss', 'NMS_CHEMss']
+        true_raw_components = ['STU_RS_CA01', 'STU_RS_CA02', 'STU_RS_CA03', 'STU_RS_CA04',
+                               'STU_RS_CA05', 'STU_RS_CA06', 'STU_RS_CA07', 'STU_RS_CA08']
         
         component_names = {
-            'NMS_VCss': 'Verbal Comprehension',
-            'NMS_IRss': 'Inductive Reasoning',
-            'NMS_Qss': 'Quantitative Reasoning',
-            'NMS_PAss': 'Perceptual Acuity',
-            'NMS_BIOss': 'Biology',
-            'NMS_PHYss': 'Physics',
-            'NMS_SSCss': 'Social Science',
-            'NMS_CHEMss': 'Chemistry'
+            'STU_RS_CA01': 'Verbal (CA01)',
+            'STU_RS_CA02': 'Inductive Reasoning (CA02)',
+            'STU_RS_CA03': 'Quantitative (CA03)',
+            'STU_RS_CA04': 'Perceptual Acuity (CA04)',
+            'STU_RS_CA05': 'Biology (CA05)',
+            'STU_RS_CA06': 'Physics (CA06)',
+            'STU_RS_CA07': 'Social Science (CA07)',
+            'STU_RS_CA08': 'Chemistry (CA08)'
         }
         
         missing_data = []
-        for comp in score_components:
-            missing_count = df_final[comp].isnull().sum()
-            missing_pct = missing_count / len(df_final) * 100
+        for comp in true_raw_components:
+            missing_count = df_matching[comp].isnull().sum()
+            missing_pct = missing_count / len(df_matching) * 100
             missing_data.append({
                 'Component': component_names[comp],
                 'Missing Count': missing_count,
                 'Missing %': missing_pct,
-                'Complete Count': len(df_final) - missing_count
+                'Complete Count': len(df_matching) - missing_count
             })
         
         missing_df = pd.DataFrame(missing_data)
@@ -766,7 +792,7 @@ def main():
         
         fig.update_layout(
             barmode='stack',
-            title="Component Score Completeness",
+            title="TRUE Raw Score Component Completeness (MATCHING_PLE)",
             xaxis_title="Component",
             yaxis_title="Count",
             height=500
@@ -798,7 +824,7 @@ def main():
         
         create_insight_box(
             f"Data quality is excellent with {len(df_analysis)/len(df_final)*100:.2f}% "
-            f"complete component scores and {df_analysis['Has_PLE_Match'].mean()*100:.2f}% "
+            f"complete TRUE raw score components from MATCHING_PLE and {df_analysis['Has_PLE_Match'].mean()*100:.2f}% "
             f"successful PLE integration."
         )
     
@@ -807,6 +833,7 @@ def main():
     # ========================================================================
     elif page == "📈 Performance Trends":
         st.header("📈 Overall Performance Trends (2006-2018)")
+        st.markdown("**Using TRUE Raw Scores from MATCHING_PLE**")
         
         fig_trends, yearly_stats = plot_performance_trends(df_filtered)
         st.plotly_chart(fig_trends, use_container_width=True)
@@ -814,17 +841,17 @@ def main():
         st.markdown("---")
         
         # Statistical Summary Table
-        st.subheader("📊 Yearly Statistics Summary")
+        st.subheader("📊 Yearly Statistics Summary (TRUE Raw Scores)")
         
         display_stats = yearly_stats[['Year', 'Total_Median', 'Part1_Median', 
                                        'Part2_Median', 'Per_Median', 'N_Examinees']].copy()
-        display_stats.columns = ['Year', 'Total Raw (Median)', 'Part I (Median)',
-                                 'Part II (Median)', 'Percentile (Median)', 'N Examinees']
+        display_stats.columns = ['Year', 'Total TRUE Raw (Median)', 'Part I TRUE Raw (Median)',
+                                 'Part II TRUE Raw (Median)', 'Percentile (Median)', 'N Examinees']
         
         st.dataframe(display_stats.style.format({
-            'Total Raw (Median)': '{:.1f}',
-            'Part I (Median)': '{:.1f}',
-            'Part II (Median)': '{:.1f}',
+            'Total TRUE Raw (Median)': '{:.1f}',
+            'Part I TRUE Raw (Median)': '{:.1f}',
+            'Part II TRUE Raw (Median)': '{:.1f}',
             'Percentile (Median)': '{:.1f}',
             'N Examinees': '{:,.0f}'
         }), use_container_width=True)
@@ -835,12 +862,12 @@ def main():
         st.subheader("💡 Key Findings")
         
         create_insight_box(
-            f"Total raw score median ranges from {yearly_stats['Total_Median'].min():.1f} "
+            f"Total TRUE raw score median ranges from {yearly_stats['Total_Median'].min():.1f} "
             f"to {yearly_stats['Total_Median'].max():.1f} across the study period."
         )
         
         create_insight_box(
-            f"Part I (Aptitude) scores show median range of {yearly_stats['Part1_Median'].min():.1f} "
+            f"Part I (Aptitude) TRUE raw scores show median range of {yearly_stats['Part1_Median'].min():.1f} "
             f"to {yearly_stats['Part1_Median'].max():.1f}, while Part II (Science) ranges from "
             f"{yearly_stats['Part2_Median'].min():.1f} to {yearly_stats['Part2_Median'].max():.1f}."
         )
@@ -856,9 +883,10 @@ def main():
     # ========================================================================
     elif page == "⚖️ Stability Analysis":
         st.header("⚖️ Exam Score Stability Analysis")
+        st.markdown("**Using TRUE Raw Scores from MATCHING_PLE**")
         
         st.markdown("""
-        This analysis assesses distributional stability of scores across years, 
+        This analysis assesses distributional stability of TRUE raw scores across years, 
         which serves as a proxy for exam difficulty consistency.
         """)
         
@@ -870,7 +898,7 @@ def main():
         # Statistical Tests
         st.subheader("📊 Kruskal-Wallis Tests for Stability")
         
-        years_list = [df_filtered[df_filtered['Year'] == y]['Total_Raw_Score_Calculated'].dropna() 
+        years_list = [df_filtered[df_filtered['Year'] == y]['Total_Raw_Score_TRUE'].dropna() 
                       for y in sorted(df_filtered['Year'].unique())]
         
         if len(years_list) > 1:
@@ -881,9 +909,7 @@ def main():
             k_groups = df_filtered['Year'].nunique()
             eta_squared = (h_total - k_groups + 1) / (n_total - k_groups) if (n_total - k_groups) > 0 else 0
             
-            col1 = st.columns(1)[0]
-            col2 = st.columns(1)[0]
-            col3 = st.columns(1)[0]
+            col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.metric("H-statistic", f"{h_total:.2f}")
@@ -895,12 +921,12 @@ def main():
             if p_total < 0.05:
                 create_warning_box(
                     f"Significant differences detected across years (p = {p_total:.6f}). "
-                    f"This suggests distributional changes in raw scores over time."
+                    f"This suggests distributional changes in TRUE raw scores over time."
                 )
             else:
                 create_insight_box(
                     f"No significant differences across years (p = {p_total:.6f}). "
-                    f"Scores show distributional stability."
+                    f"TRUE raw scores show distributional stability."
                 )
             
             # Effect size interpretation
@@ -913,7 +939,7 @@ def main():
             
             create_insight_box(
                 f"Effect size of η² = {eta_squared:.4f} indicates a {effect_interp.lower()} "
-                f"effect magnitude of year on score distributions."
+                f"effect magnitude of year on TRUE raw score distributions."
             )
         
         st.markdown("---")
@@ -922,7 +948,7 @@ def main():
         st.subheader("📖 Interpretation Guide")
         
         st.markdown("""
-        - **Boxplots** show the distribution (median, quartiles, outliers) of scores each year
+        - **Boxplots** show the distribution (median, quartiles, outliers) of TRUE raw scores each year
         - **Median shifts** indicate central tendency changes over time
         - **IQR consistency** reflects score variability stability
         - **Kruskal-Wallis test** assesses whether year groups differ significantly
@@ -951,7 +977,7 @@ def main():
         # Decile Distribution Table
         st.subheader("📋 Decile Distribution by Year (%)")
         
-        st.dataframe(decile_year.round(2).style.background_gradient(cmap='YlGnBu', axis=None),
+        st.dataframe(decile_year.T.reindex(['D10', 'D9', 'D8', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'D1']).round(2).style.background_gradient(cmap='YlGnBu', axis=None),
                     use_container_width=True)
         
         st.markdown("---")
@@ -1060,7 +1086,7 @@ def main():
                 'Count': len(uni_data),
                 'Percentage': len(uni_data) / len(df_filtered) * 100,
                 'Median Percentile': uni_data['NMS_PER'].median(),
-                'Mean GPS': uni_data['NMS_GPS'].mean(),
+                'Mean TRUE Raw Score': uni_data['Total_Raw_Score_TRUE'].mean(),
                 'Top Decile %': uni_data['Percentile_Decile'].isin(['D8', 'D9', 'D10']).mean() * 100
             })
         
@@ -1070,7 +1096,7 @@ def main():
             'Count': '{:,.0f}',
             'Percentage': '{:.2f}%',
             'Median Percentile': '{:.1f}',
-            'Mean GPS': '{:.1f}',
+            'Mean TRUE Raw Score': '{:.1f}',
             'Top Decile %': '{:.2f}%'
         }).background_gradient(subset=['Median Percentile'], cmap='RdYlGn'),
                     use_container_width=True)
@@ -1097,7 +1123,7 @@ def main():
                 'Count': len(course_data),
                 'Percentage': len(course_data) / len(df_filtered) * 100,
                 'Median Percentile': course_data['NMS_PER'].median(),
-                'Mean GPS': course_data['NMS_GPS'].mean(),
+                'Mean TRUE Raw Score': course_data['Total_Raw_Score_TRUE'].mean(),
                 'Top Decile %': course_data['Percentile_Decile'].isin(['D8', 'D9', 'D10']).mean() * 100,
                 'Bottom Decile %': course_data['Percentile_Decile'].isin(['D1', 'D2', 'D3']).mean() * 100
             })
@@ -1108,7 +1134,7 @@ def main():
             'Count': '{:,.0f}',
             'Percentage': '{:.2f}%',
             'Median Percentile': '{:.1f}',
-            'Mean GPS': '{:.1f}',
+            'Mean TRUE Raw Score': '{:.1f}',
             'Top Decile %': '{:.2f}%',
             'Bottom Decile %': '{:.2f}%'
         }).background_gradient(subset=['Median Percentile', 'Top Decile %'], cmap='RdYlGn'),
@@ -1128,6 +1154,7 @@ def main():
             st.markdown("**Medical & Allied**")
             st.metric("Count", f"{len(medical_data):,}")
             st.metric("Median Percentile", f"{medical_data['NMS_PER'].median():.1f}")
+            st.metric("Mean TRUE Raw Score", f"{medical_data['Total_Raw_Score_TRUE'].mean():.1f}")
             st.metric("Top Decile %", 
                      f"{medical_data['Percentile_Decile'].isin(['D8', 'D9', 'D10']).mean()*100:.2f}%")
         
@@ -1135,6 +1162,7 @@ def main():
             st.markdown("**Other Courses**")
             st.metric("Count", f"{len(other_data):,}")
             st.metric("Median Percentile", f"{other_data['NMS_PER'].median():.1f}")
+            st.metric("Mean TRUE Raw Score", f"{other_data['Total_Raw_Score_TRUE'].mean():.1f}")
             st.metric("Top Decile %",
                      f"{other_data['Percentile_Decile'].isin(['D8', 'D9', 'D10']).mean()*100:.2f}%")
         
@@ -1160,6 +1188,7 @@ def main():
     # ========================================================================
     elif page == "🏥 PLE Integration":
         st.header("🏥 PLE Integration Analysis")
+        st.markdown("**Using TRUE Raw Scores from MATCHING_PLE**")
         
         st.markdown("""
         Descriptive alignment with PLE (Physician Licensure Examination) passers using existing matches.
@@ -1188,19 +1217,21 @@ def main():
             st.markdown("---")
             
             # Performance Comparison
-            st.subheader("📊 Performance Comparison: PLE-Matched vs Non-Matched")
+            st.subheader("📊 Performance Comparison: PLE-Matched vs Non-Matched (TRUE Raw Scores)")
             
             comparison_data = {
                 'Metric': [
                     'Median Percentile',
-                    'Mean GPS',
-                    'Mean Total Raw Score',
+                    'Mean TRUE Raw Score',
+                    'Mean Part I TRUE Raw',
+                    'Mean Part II TRUE Raw',
                     'Top Decile %'
                 ],
                 'PLE-Matched': [
                     ple_matched['NMS_PER'].median(),
-                    ple_matched['NMS_GPS'].mean(),
-                    ple_matched['Total_Raw_Score_Calculated'].mean(),
+                    ple_matched['Total_Raw_Score_TRUE'].mean(),
+                    ple_matched['Part_I_Raw_Score_TRUE'].mean(),
+                    ple_matched['Part_II_Raw_Score_TRUE'].mean(),
                     ple_matched['Percentile_Decile'].isin(['D8', 'D9', 'D10']).mean() * 100
                 ]
             }
@@ -1208,8 +1239,9 @@ def main():
             if len(non_ple) > 0:
                 comparison_data['Non-Matched'] = [
                     non_ple['NMS_PER'].median(),
-                    non_ple['NMS_GPS'].mean(),
-                    non_ple['Total_Raw_Score_Calculated'].mean(),
+                    non_ple['Total_Raw_Score_TRUE'].mean(),
+                    non_ple['Part_I_Raw_Score_TRUE'].mean(),
+                    non_ple['Part_II_Raw_Score_TRUE'].mean(),
                     non_ple['Percentile_Decile'].isin(['D8', 'D9', 'D10']).mean() * 100
                 ]
             
@@ -1223,15 +1255,14 @@ def main():
             
             # Statistical test
             if len(non_ple) > 0:
-                u_stat, p_val = stats.mannwhitneyu(ple_matched['NMS_PER'].dropna(),
-                                                    non_ple['NMS_PER'].dropna(),
+                u_stat, p_val = stats.mannwhitneyu(ple_matched['Total_Raw_Score_TRUE'].dropna(),
+                                                    non_ple['Total_Raw_Score_TRUE'].dropna(),
                                                     alternative='two-sided')
                 
                 st.markdown("---")
-                st.subheader("📈 Statistical Test: Mann-Whitney U")
+                st.subheader("📈 Statistical Test: Mann-Whitney U (TRUE Raw Scores)")
                 
-                col1 = st.columns(1)[0]
-                col2 = st.columns(1)[0]
+                col1, col2 = st.columns(2)
                 with col1:
                     st.metric("U-statistic", f"{u_stat:.0f}")
                 with col2:
@@ -1239,7 +1270,7 @@ def main():
                 
                 if p_val < 0.05:
                     create_insight_box(
-                        f"PLE-matched examinees show significantly different performance "
+                        f"PLE-matched examinees show significantly different TRUE raw score performance "
                         f"compared to non-matched (p={p_val:.6f})."
                     )
             
@@ -1340,12 +1371,6 @@ def main():
                 'Flow: Percentile Decile → PLE Match Status'
             )
             
-            # Replace PLE Status with proper labels
-            fig_sankey_ple.data[0].node.label = [
-                label if not isinstance(label, bool) else ('PLE Matched' if label else 'Not Matched')
-                for label in fig_sankey_ple.data[0].node.label
-            ]
-            
             st.plotly_chart(fig_sankey_ple, use_container_width=True)
             
             # Non-match rates by decile
@@ -1382,6 +1407,7 @@ def main():
     # ========================================================================
     elif page == "📉 Statistical Tests":
         st.header("📉 Statistical Tests Summary")
+        st.markdown("**Using TRUE Raw Scores from MATCHING_PLE**")
         
         st.markdown("""
         Comprehensive statistical testing using non-parametric methods treating 
@@ -1389,9 +1415,9 @@ def main():
         """)
         
         # Kruskal-Wallis by Year
-        st.subheader("🔬 Kruskal-Wallis Test: Percentile Ranks by Year")
+        st.subheader("🔬 Kruskal-Wallis Test: TRUE Raw Scores by Year")
         
-        years_list = [df_filtered[df_filtered['Year'] == y]['NMS_PER'].dropna()
+        years_list = [df_filtered[df_filtered['Year'] == y]['Total_Raw_Score_TRUE'].dropna()
                      for y in sorted(df_filtered['Year'].unique())]
         
         if len(years_list) > 1:
@@ -1401,10 +1427,7 @@ def main():
             k_groups = df_filtered['Year'].nunique()
             eta_squared = (h_stat - k_groups + 1) / (n_total - k_groups) if (n_total - k_groups) > 0 else 0
             
-            col1 = st.columns(1)[0]
-            col2 = st.columns(1)[0]
-            col3 = st.columns(1)[0]
-            col4 = st.columns(1)[0]
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 st.metric("H-statistic", f"{h_stat:.2f}")
@@ -1418,12 +1441,12 @@ def main():
             if p_val < 0.05:
                 create_warning_box(
                     f"Significant differences detected across years (p < 0.05). "
-                    f"This indicates distributional shifts in performance over time."
+                    f"This indicates distributional shifts in TRUE raw score performance over time."
                 )
             else:
                 create_insight_box(
                     f"No significant differences across years (p ≥ 0.05). "
-                    f"This suggests distributional stability."
+                    f"This suggests distributional stability in TRUE raw scores."
                 )
         
         st.markdown("---")
@@ -1437,9 +1460,7 @@ def main():
         if len(uni_list) > 1:
             h_uni, p_uni = kruskal(*uni_list)
             
-            col1 = st.columns(1)[0]
-            col2 = st.columns(1)[0]
-            col3 = st.columns(1)[0]
+            col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.metric("H-statistic", f"{h_uni:.2f}")
