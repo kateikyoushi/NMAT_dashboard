@@ -352,6 +352,7 @@ def plot_stability_analysis(df):
 def plot_decile_distribution(df):
     """Decile Distribution Analysis"""
     decile_by_year = pd.crosstab(df['Year'], df['Percentile_Decile'], normalize='index') * 100
+    decile_by_year_counts = pd.crosstab(df['Year'], df['Percentile_Decile'])
     
     # Heatmap
     fig1 = go.Figure(data=go.Heatmap(
@@ -400,7 +401,7 @@ def plot_decile_distribution(df):
         hovermode='x unified'
     )
     
-    return fig1, fig2, decile_by_year
+    return fig1, fig2, decile_by_year, decile_by_year_counts
 
 def plot_university_analysis(df):
     """University Type Analysis"""
@@ -439,7 +440,7 @@ def plot_university_analysis(df):
         y=top_deciles_uni.index,
         orientation='h',
         marker_color=colors,
-        text=top_deciles_uni.values.round(2),
+        text=[f"{v:.2f}" for v in top_deciles_uni.values],
         texttemplate='%{text}%',
         textposition='outside'
     ))
@@ -673,70 +674,147 @@ def main():
     if page == "🏠 Executive Summary":
         st.header("📊 Executive Summary")
         
-        col1, col2, col3, col4 = st.columns(4)
+        # Course Group Distribution Graph
+        st.subheader("📚 Course Group Distribution")
         
-        create_metric_cards(col1, "Total Examinees", f"{len(df_filtered):,}")
-        create_metric_cards(col2, "Years Covered", f"{df_filtered['Year'].nunique()}")
-        create_metric_cards(col3, "Median Percentile", f"{df_filtered['NMS_PER'].median():.1f}")
-        create_metric_cards(col4, "PLE Match Rate", f"{df_filtered['Has_PLE_Match'].mean()*100:.2f}%")
+        st.markdown("""
+        Courses are grouped using keyword-based classification:
+        - **Medical & Allied**: Medical, Nursing, Pharmacy, Health-related
+        - **Natural Sciences**: Biology, Physics, Chemistry, Natural Sciences
+        - **Social & Behavioral Sciences**: Psychology, Economics, Social Sciences
+        - **Engineering & Technology**: Engineering, Technology fields
+        - **Education**: Teacher training, Education programs
+        - **Other**: All remaining courses
+        """)
         
-        st.markdown("---")
+        course_group_counts = df_filtered['Course_Group'].value_counts()
+        
+        fig_course_groups = go.Figure(data=[go.Pie(
+            labels=course_group_counts.index,
+            values=course_group_counts.values,
+            textinfo='label+percent',
+            insidetextorientation='radial'
+        )])
+        
+        fig_course_groups.update_layout(
+            title="Distribution of Examinees by Course Group",
+            height=500
+        )
+        
+        st.plotly_chart(fig_course_groups, use_container_width=True)
+        
+        with st.expander("📊 Summary Metrics", expanded=False):
+            col1, col2, col3, col4 = st.columns(4)
+            
+            create_metric_cards(col1, "Total Examinees", f"{len(df_filtered):,}")
+            create_metric_cards(col2, "Years Covered", f"{df_filtered['Year'].nunique()}")
+            create_metric_cards(col3, "Median Percentile", f"{df_filtered['NMS_PER'].median():.1f}")
+            create_metric_cards(col4, "PLE Match Rate", f"{df_filtered['Has_PLE_Match'].mean()*100:.2f}%")
+        
+        # Data Integrity Check
+        with st.expander("✅ Data Integrity Verification", expanded=False):
+            st.markdown("""
+            **Verifying that the join preserved `NMA_College` ↔ `School Type_rec2_FINAL` relationship:**
+            """)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Total Colleges", f"{df_filtered['NMA_College'].nunique():,}")
+            with col2:
+                st.metric("University Types", f"{df_filtered['University_Type'].nunique()}")
+            with col3:
+                # Check if any college has multiple university types
+                college_type_check = df_filtered.groupby('NMA_College')['University_Type'].nunique()
+                inconsistent = (college_type_check > 1).sum()
+                st.metric("Colleges with Multiple Types", f"{inconsistent}", 
+                         delta="✅ Good" if inconsistent == 0 else "⚠️ Check")
+            
+            if inconsistent == 0:
+                create_insight_box(
+                    "✅ Perfect data integrity: Each college is correctly mapped to exactly ONE university type "
+                    "from School Type_rec2_FINAL in CLEANED_FINAL_NMAT.parquet."
+                )
+            else:
+                create_warning_box(
+                    f"⚠️ Data quality alert: {inconsistent} colleges have multiple university types. "
+                    "Please review the source data."
+                )
         
         # Key Statistics
-        st.subheader("📈 Key Performance Indicators (TRUE Raw Scores)")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("**TRUE Raw Score Statistics**")
-            st.metric("Median Total TRUE Raw Score", f"{df_filtered['Total_Raw_Score_TRUE'].median():.0f}")
-            st.metric("Median Part I TRUE Raw Score", f"{df_filtered['Part_I_Raw_Score_TRUE'].median():.0f}")
-            st.metric("Median Part II TRUE Raw Score", f"{df_filtered['Part_II_Raw_Score_TRUE'].median():.0f}")
-        
-        with col2:
-            st.markdown("**University Distribution**")
-            for uni_type in ['Public', 'Private', 'Foreign']:
-                count = (df_filtered['University_Type'] == uni_type).sum()
-                pct = count / len(df_filtered) * 100
-                st.metric(uni_type, f"{count:,}", f"{pct:.2f}%")
-        
-        with col3:
-            st.markdown("**Course Distribution**")
-            top_courses = df_filtered['Course_Group'].value_counts().head(3)
-            for course, count in top_courses.items():
-                pct = count / len(df_filtered) * 100
-                st.metric(course, f"{count:,}", f"{pct:.1f}%")
-        
-        st.markdown("---")
+        with st.expander("📈 Key Performance Indicators (TRUE Raw Scores)", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("**TRUE Raw Score Statistics**")
+                st.metric("Median Total TRUE Raw Score", f"{df_filtered['Total_Raw_Score_TRUE'].median():.0f}")
+                st.metric("Median Part I TRUE Raw Score", f"{df_filtered['Part_I_Raw_Score_TRUE'].median():.0f}")
+                st.metric("Median Part II TRUE Raw Score", f"{df_filtered['Part_II_Raw_Score_TRUE'].median():.0f}")
+            
+            with col2:
+                st.markdown("**University Distribution**")
+                uni_dist = df_filtered['University_Type'].value_counts().head(3)
+                for uni_type, count in uni_dist.items():
+                    pct = count / len(df_filtered) * 100
+                    st.metric(uni_type, f"{count:,}", f"{pct:.2f}%")
+            
+            with col3:
+                st.markdown("**Course Distribution**")
+                top_courses = df_filtered['Course_Group'].value_counts().head(3)
+                for course, count in top_courses.items():
+                    pct = count / len(df_filtered) * 100
+                    st.metric(course, f"{count:,}", f"{pct:.1f}%")
         
         # Quick Insights
-        st.subheader("💡 Key Insights")
-        
-        create_insight_box(
-            f"The dataset contains {len(df_filtered):,} complete NMAT records spanning "
-            f"{df_filtered['Year'].nunique()} years (2006-2018) with {df_filtered['Has_PLE_Match'].mean()*100:.2f}% "
-            f"successfully matched to PLE data using TRUE raw scores from MATCHING_PLE."
-        )
-        
-        foreign_count = (df_filtered['University_Type'] == 'Foreign').sum()
-        foreign_pct = foreign_count / len(df_filtered) * 100
-        create_insight_box(
-            f"Foreign examinees represent {foreign_pct:.2f}% of the total population "
-            f"(n={foreign_count:,}), a key policy interest group."
-        )
-        
-        medical_data = df_filtered[df_filtered['Course_Group'] == 'Medical & Allied']
-        medical_median = medical_data['NMS_PER'].median()
-        create_insight_box(
-            f"Medical & Allied students show median percentile rank of {medical_median:.1f}, "
-            f"comprising {len(medical_data)/len(df_filtered)*100:.1f}% of examinees."
-        )
+        with st.expander("💡 Key Insights", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("**TRUE Raw Score Statistics**")
+                st.metric("Median Total TRUE Raw Score", f"{df_filtered['Total_Raw_Score_TRUE'].median():.0f}")
+                st.metric("Median Part I TRUE Raw Score", f"{df_filtered['Part_I_Raw_Score_TRUE'].median():.0f}")
+                st.metric("Median Part II TRUE Raw Score", f"{df_filtered['Part_II_Raw_Score_TRUE'].median():.0f}")
+            
+            with col2:
+                st.markdown("**University Distribution**")
+                uni_dist = df_filtered['University_Type'].value_counts().head(3)
+                for uni_type, count in uni_dist.items():
+                    pct = count / len(df_filtered) * 100
+                    st.metric(str(uni_type), f"{count:,}", f"{pct:.2f}%")
+            
+            with col3:
+                st.markdown("**Course Distribution**")
+                top_courses = df_filtered['Course_Group'].value_counts().head(3)
+                for course, count in top_courses.items():
+                    pct = count / len(df_filtered) * 100
+                    st.metric(str(course), f"{count:,}", f"{pct:.1f}%")
+    
     
     # ========================================================================
     # PAGE: DATA QUALITY
     # ========================================================================
     elif page == "📋 Data Quality & Validation":
         st.header("📋 Data Quality & Validation")
+        
+        st.markdown("""
+        ### 📊 Data Processing Pipeline
+        
+        **Step 1:** Load `CLEANED_FINAL_NMAT.parquet`
+        - Contains: `NMA_College`, `School Type_rec2_FINAL`, `NMA_AppNo`, and all NMAT scores
+        
+        **Step 2:** Load `MATCHING_PLE_NMAT.parquet`  
+        - Contains: `STU_NO` (→ `NMA_AppNo`), `STU_RS_CA01-08` (TRUE raw scores)
+        
+        **Step 3:** LEFT JOIN on `NMA_AppNo`
+        - Preserves ALL columns from CLEANED_FINAL_NMAT (including `NMA_College` & `School Type_rec2_FINAL`)
+        - Adds TRUE raw score components from MATCHING_PLE
+        
+        **Step 4:** Create derived columns
+        - `University_Type` = `School Type_rec2_FINAL` (with fillna('Unknown'))
+        - Ensures 1:1 relationship: Each `NMA_College` → ONE `University_Type`
+        
+        ---
+        """)
         
         col1, col2, col3 = st.columns(3)
         
@@ -805,6 +883,51 @@ def main():
             'Missing %': '{:.2f}%',
             'Complete Count': '{:,.0f}'
         }), use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Data Relationship Validation
+        st.subheader("🔍 Data Relationship Validation: NMA_College ↔ School Type")
+        
+        st.markdown("""
+        **Verification that `NMA_College` and `School Type_rec2_FINAL` (University_Type) relationship is preserved from CLEANED_FINAL_NMAT.parquet**
+        """)
+        
+        # Count unique colleges per university type
+        college_uni_counts = df_analysis.groupby('University_Type')['NMA_College'].nunique().reset_index()
+        college_uni_counts.columns = ['University Type', 'Unique Colleges']
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Colleges per University Type**")
+            st.dataframe(college_uni_counts.style.format({
+                'Unique Colleges': '{:,.0f}'
+            }), use_container_width=True)
+        
+        with col2:
+            st.markdown("**Sample College-University Type Mapping**")
+            # Show sample of 10 colleges with their university types
+            sample_mapping = df_analysis[['NMA_College', 'University_Type']].drop_duplicates().head(10)
+            st.dataframe(sample_mapping, use_container_width=True)
+        
+        # Validation check: Ensure each college has only ONE university type
+        college_type_check = df_analysis.groupby('NMA_College')['University_Type'].nunique()
+        inconsistent_colleges = college_type_check[college_type_check > 1]
+        
+        if len(inconsistent_colleges) == 0:
+            create_insight_box(
+                "✅ Data integrity verified: Each college has exactly ONE university type. "
+                f"The NMA_College ↔ School Type_rec2_FINAL relationship is correctly preserved."
+            )
+        else:
+            create_warning_box(
+                f"⚠️ Found {len(inconsistent_colleges)} colleges with multiple university types. "
+                f"This may indicate data quality issues in the source file."
+            )
+            st.write("Colleges with inconsistent university types:")
+            st.dataframe(df_analysis[df_analysis['NMA_College'].isin(inconsistent_colleges.index)]
+                        [['NMA_College', 'University_Type']].drop_duplicates().sort_values('NMA_College'))
         
         st.markdown("---")
         
@@ -967,7 +1090,7 @@ def main():
         Decile analysis provides a policy-oriented lens for examining performance distribution patterns.
         """)
         
-        fig_heat, fig_trend, decile_year = plot_decile_distribution(df_filtered)
+        fig_heat, fig_trend, decile_year, decile_year_counts = plot_decile_distribution(df_filtered)
         
         st.plotly_chart(fig_heat, use_container_width=True)
         st.plotly_chart(fig_trend, use_container_width=True)
@@ -975,9 +1098,9 @@ def main():
         st.markdown("---")
         
         # Decile Distribution Table
-        st.subheader("📋 Decile Distribution by Year (%)")
+        st.subheader("📋 Decile Distribution by Year (Counts)")
         
-        st.dataframe(decile_year.T.reindex(['D10', 'D9', 'D8', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'D1']).round(2).style.background_gradient(cmap='YlGnBu', axis=None),
+        st.dataframe(decile_year_counts.T.reindex(['D10', 'D9', 'D8', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'D1']).style.background_gradient(cmap='YlGnBu', axis=None),
                     use_container_width=True)
         
         st.markdown("---")
@@ -1026,7 +1149,7 @@ def main():
         st.markdown("---")
         
         # Foreign Examinees Deep Dive
-        st.subheader("🌍 Foreign Examinees Analysis (Policy Interest)")
+        st.subheader("� Foreign Examinees Analysis (Policy Interest)")
         
         foreign_data = df_filtered[df_filtered['University_Type'] == 'Foreign']
         
@@ -1050,7 +1173,7 @@ def main():
                 x=foreign_decile.index,
                 y=foreign_decile.values,
                 marker_color='red',
-                text=foreign_decile.values.round(1),
+                text=[f"{v:.1f}" for v in foreign_decile.values],
                 texttemplate='%{text}%',
                 textposition='outside'
             ))
@@ -1100,6 +1223,76 @@ def main():
             'Top Decile %': '{:.2f}%'
         }).background_gradient(subset=['Median Percentile'], cmap='RdYlGn'),
                     use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Data Source Verification
+        st.subheader("📋 Data Source Verification")
+        
+        st.markdown("""
+        **Confirming data integrity:** All colleges below are correctly mapped to their university types 
+        from `School Type_rec2_FINAL` in `CLEANED_FINAL_NMAT.parquet`.
+        """)
+        
+        # Create comprehensive college-university type mapping
+        college_mapping = df_filtered.groupby(['University_Type', 'NMA_College']).size().reset_index(name='Total_Examinees')
+        college_mapping = college_mapping.sort_values(['University_Type', 'Total_Examinees'], ascending=[True, False])
+        
+        # Display by university type
+        for uni_type in sorted(df_filtered['University_Type'].unique()):
+            with st.expander(f"📚 {uni_type} - Complete College List", expanded=False):
+                uni_colleges = college_mapping[college_mapping['University_Type'] == uni_type]
+                st.dataframe(uni_colleges[['NMA_College', 'Total_Examinees']].reset_index(drop=True).style.format({
+                    'Total_Examinees': '{:,.0f}'
+                }), use_container_width=True)
+                st.caption(f"Total: {len(uni_colleges)} colleges | {uni_colleges['Total_Examinees'].sum():,} examinees")
+        
+        st.markdown("---")
+        
+        # College-Level Analysis by University Type
+        # Get unique university types from the actual data
+        university_types = sorted(df_filtered['University_Type'].unique())
+        
+        for uni_type in university_types:
+            st.subheader(f"🏛️ {uni_type} Universities: Decile Distribution (%)")
+            
+            # Filter data for this university type using the correct column
+            type_data = df_filtered[df_filtered['University_Type'] == uni_type]
+            
+            if len(type_data) == 0:
+                st.write(f"No data available for {uni_type} universities.")
+                continue
+            
+            # Compute decile counts per college for this type
+            college_decile = pd.crosstab(type_data['NMA_College'], type_data['Percentile_Decile'])
+            college_decile = college_decile.reindex(columns=['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10'], fill_value=0)
+            
+            # Calculate total students and percentages
+            college_decile['Total_Students'] = college_decile.sum(axis=1)
+            for decile in ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10']:
+                college_decile[f'{decile}_%'] = (college_decile[decile] / college_decile['Total_Students'] * 100).round(2)
+            
+            # Filter colleges with at least 10 students
+            college_decile = college_decile[college_decile['Total_Students'] >= 10]
+            
+            if len(college_decile) == 0:
+                st.write(f"No {uni_type} colleges with ≥10 examinees.")
+                continue
+            
+            # Sort by D10 percentage descending
+            college_decile = college_decile.sort_values('D10_%', ascending=False)
+            
+            # Display table with percentages
+            display_cols = ['Total_Students'] + [f'{d}_%' for d in ['D10', 'D9', 'D8', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'D1']]
+            st.dataframe(college_decile[display_cols].style.format({
+                'Total_Students': '{:,.0f}',
+                'D10_%': '{:.2f}%', 'D9_%': '{:.2f}%', 'D8_%': '{:.2f}%', 'D7_%': '{:.2f}%',
+                'D6_%': '{:.2f}%', 'D5_%': '{:.2f}%', 'D4_%': '{:.2f}%', 'D3_%': '{:.2f}%',
+                'D2_%': '{:.2f}%', 'D1_%': '{:.2f}%'
+            }).background_gradient(subset=['D10_%'], cmap='RdYlGn'),
+                        use_container_width=True)
+            
+            st.markdown("---")
     
     # ========================================================================
     # PAGE: COURSE ANALYSIS
@@ -1480,66 +1673,94 @@ def main():
         
         st.markdown("---")
         
-        # Chi-square Test: University × Decile
-        st.subheader("🔬 Chi-Square Test: University Type × Decile Independence")
+        # Kruskal-Wallis by University Type
+        st.subheader("🔬 Kruskal-Wallis Test: Percentile Ranks by University Type")
         
-        contingency_table = pd.crosstab(df_filtered['University_Type'], 
-                                        df_filtered['Percentile_Decile'])
+        uni_list = [df_filtered[df_filtered['University_Type'] == u]['NMS_PER'].dropna()
+                   for u in df_filtered['University_Type'].unique() if len(df_filtered[df_filtered['University_Type'] == u]) > 0]
         
-        chi2, p_chi, dof, expected = stats.chi2_contingency(contingency_table)
+        if len(uni_list) > 1:
+            h_uni, p_uni = kruskal(*uni_list)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("H-statistic", f"{h_uni:.2f}")
+            with col2:
+                st.metric("p-value", f"{p_uni:.6f}")
+            with col3:
+                st.metric("df", f"{len(uni_list) - 1}")
+            
+            if p_uni < 0.05:
+                create_warning_box(
+                    f"Significant differences detected across university types (p < 0.05). "
+                    f"This suggests performance varies by institutional background."
+                )
+            else:
+                create_insight_box(
+                    f"No significant differences across university types (p ≥ 0.05). "
+                    f"Performance appears consistent regardless of institutional background."
+                )
         
-        col1, col2, col3 = st.columns(3)
+        st.markdown("---")
         
-        with col1:
-            st.metric("χ² statistic", f"{chi2:.2f}")
-        with col2:
-            st.metric("p-value", f"{p_chi:.6f}")
-        with col3:
-            st.metric("df", f"{dof}")
+        # Kruskal-Wallis by Course Group
+        st.subheader("🔬 Kruskal-Wallis Test: Percentile Ranks by Course Group")
         
-        if p_chi < 0.05:
-            create_insight_box(
-                f"Significant association between University Type and Decile distribution (p < 0.05). "
-                f"Performance patterns vary by institution type."
-            )
+        course_list = [df_filtered[df_filtered['Course_Group'] == c]['NMS_PER'].dropna()
+                      for c in df_filtered['Course_Group'].unique() if len(df_filtered[df_filtered['Course_Group'] == c]) > 0]
+        
+        if len(course_list) > 1:
+            h_course, p_course = kruskal(*course_list)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("H-statistic", f"{h_course:.2f}")
+            with col2:
+                st.metric("p-value", f"{p_course:.6f}")
+            with col3:
+                st.metric("df", f"{len(course_list) - 1}")
+            
+            if p_course < 0.05:
+                create_warning_box(
+                    f"Significant differences detected across course groups (p < 0.05). "
+                    f"Pre-medical course background appears to influence NMAT performance."
+                )
+            else:
+                create_insight_box(
+                    f"No significant differences across course groups (p ≥ 0.05). "
+                    f"Performance appears consistent across different pre-medical backgrounds."
+                )
         
         st.markdown("---")
         
         # Interpretation Guide
-        st.subheader("📖 Statistical Test Interpretation")
+        st.subheader("📖 Statistical Testing Guide")
         
         st.markdown("""
-        **Kruskal-Wallis Test**
+        **Kruskal-Wallis H Test**
         - Non-parametric alternative to one-way ANOVA
-        - Tests whether groups come from the same distribution
-        - Does not assume normality
-        - p < 0.05: Significant differences exist between groups
+        - Tests whether samples from different groups come from the same distribution
+        - **Null Hypothesis:** All groups have the same distribution
+        - **p < 0.05:** Reject null hypothesis, groups differ significantly
+        - **p ≥ 0.05:** Fail to reject null hypothesis, no significant difference
         
-        **Effect Size (η²)**
-        - Small: < 0.06
-        - Medium: 0.06 - 0.14
-        - Large: > 0.14
-        
-        **Chi-Square Test**
-        - Tests independence between two categorical variables
-        - p < 0.05: Variables are associated (not independent)
-        - Used for contingency table analysis
-        
-        **Mann-Whitney U Test**
-        - Non-parametric alternative to independent t-test
-        - Compares two independent groups
-        - Tests whether one group tends to have larger values
+        **Interpretation:**
+        - Significant results (p < 0.05) suggest that group membership (year, university type, or course) is associated with performance differences
+        - Non-significant results (p ≥ 0.05) suggest performance is stable across groups
+        - Effect size (η²) quantifies the magnitude of differences
         """)
     
     # Footer
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     <div style='text-align: center; color: #666; padding: 2rem 0;'>
         <p><strong>NMAT Performance Analysis Dashboard</strong></p>
-        <p>Data Period: 2006-2018 | Records: {:,} | Years: {}</p>
+        <p>Data Period: 2006-2018 | Records: {len(df_analysis):,} | Years: {df_analysis['Year'].nunique()}</p>
         <p>Developed for Policy Report and Stakeholder Analysis</p>
     </div>
-    """.format(len(df_analysis), df_analysis['Year'].nunique()), unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 # ============================================================================
 # RUN APP
